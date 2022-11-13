@@ -106,9 +106,8 @@ def check_response(response):
 
 
 def parse_status(homework):
-    """
-    Извлекает из информации о конкретной домашней работе статус этой работы.
-    """
+    """Извлекает из информации о конкретной домашней работе
+    статус этой работы."""
     homework_name = homework['homework_name']
     if 'homework_name' not in homework:
         raise KeyError('Отсутствует ключ "homework_name" в ответе API')
@@ -125,7 +124,7 @@ def parse_status(homework):
 
 
 def check_os_keys():
-    """Проверка токенов в системе"""
+    """Проверка токенов в системе."""
     keys = [
         'YANDEX_TOKEN',
         'BOT_TOKEN',
@@ -141,7 +140,7 @@ def check_os_keys():
 
 
 def check_tokens():
-    """Проверка доступности переменных окружения"""
+    """Проверка доступности переменных окружения."""
     if all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)):
         return True
     else:
