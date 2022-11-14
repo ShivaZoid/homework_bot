@@ -193,6 +193,7 @@ def main():
     current_timestamp = int(time.time())
     status = ''
     message_error = ''
+    api_message = 'Повторный запрос к API через 10 минут'
     while True:
         try:
             response = get_api_answer(current_timestamp)
@@ -201,26 +202,22 @@ def main():
                 message = parse_status(homework)
                 send_message(bot, message)
                 status = homework['status']
-                logger.info(
-                    (f'Есть изменения, <<{status}>>. Повторный запрос к API '
-                     'через 10 минут')
-                )
+                logger.info(f'Есть изменения. <<{status}>>. {api_message}')
                 time.sleep(RETRY_TIME)
             else:
-                logger.info(
-                    ('Изменений нет, повторный запрос к API '
-                     'через 10 минут')
-                )
+                logger.info(f'Изменений нет. {api_message}')
                 time.sleep(RETRY_TIME)
         except Exception as error:
-            logging.error(error)
-            message = f'Сбой в работе программы: {error}'
-            if message != message_error:
-                send_message(bot, message)
-            logger.info(
-                'Сбой программы, повторный запрос к API через 10 минут'
-            )
-            time.sleep(RETRY_TIME)
+            if not response['homeworks']:
+                logger.info(f'{error} {api_message}')
+                time.sleep(RETRY_TIME)
+            else:
+                logger.error(error)
+                message = f'Сбой в работе программы: {error}'
+                if message != message_error:
+                    send_message(bot, message)
+                logger.info(f'Сбой программы. {api_message}')
+                time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
