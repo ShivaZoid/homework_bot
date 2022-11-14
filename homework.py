@@ -1,13 +1,13 @@
+from http import HTTPStatus
+import json
 import logging
+from logging.handlers import RotatingFileHandler
 import os
 import time
 
+from dotenv import load_dotenv
 import requests
 import telegram
-
-from dotenv import load_dotenv
-from http import HTTPStatus
-from logging.handlers import RotatingFileHandler
 
 
 load_dotenv()
@@ -47,6 +47,30 @@ formatter = logging.Formatter(
 handler.setFormatter(formatter)
 
 
+class RequestExceptionError(Exception):
+    """Ошибка при запросе."""
+
+
+class StatusCodeError(Exception):
+    """Ошибка ответа сервера."""
+
+
+class DictionaryError(Exception):
+    """Ошибка полученного словаря."""
+
+
+class UnknownStatusError(Exception):
+    """Неизвестный статус работы."""
+
+
+class TokenSystemError(Exception):
+    """Отсутствует токен в системе."""
+
+
+class EnvironmentVariableError(Exception):
+    """Отсутствует переменная окружения."""
+
+
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
     try:
@@ -57,8 +81,8 @@ def send_message(bot, message):
         logger.info(
             'Отправлено сообщение в чат {TELEGRAM_CHAT_ID}: {message}'
         )
-    except Exception:
-        logger.error('Ошибка отправки сообщения')
+    except telegram.TelegramError as telegram_error:
+        logger.error(f'Ошибка отправки сообщения {telegram_error}')
 
 
 def get_api_answer(current_timestamp):
@@ -72,35 +96,43 @@ def get_api_answer(current_timestamp):
             headers=HEADERS,
             params=params,
         )
-    except Exception as error:
-        logging.error(f'Ошибка при запросе к API: {error}')
-        raise Exception(f'Ошибка при запросе к API: {error}')
+    except requests.exceptions.RequestException as requests_error:
+        api_answer_error = f'Ошибка при запросе к API: {requests_error}'
+        logger.error(api_answer_error)
+        raise RequestExceptionError(api_answer_error) from requests_error
 
     status_code = homework_response.status_code
     if status_code != HTTPStatus.OK:
-        logging.error(f'Ошибка {status_code}')
-        raise Exception(f'Ошибка {status_code}')
+        status_code_error = f'Ошибка {status_code}'
+        logger.error(status_code_error)
+        raise StatusCodeError(status_code_error)
 
     try:
         return homework_response.json()
-    except ValueError:
-        logger.error('Ошибка ответа формата json')
-        raise ValueError('Ошибка ответа формата json')
+    except json.JSONDecodeError as json_error:
+        api_answer_error = f'Ошибка ответа формата json {json_error}'
+        logger.error(api_answer_error)
+        raise json.JSONDecodeError(api_answer_error) from json_error
 
 
 def check_response(response):
     """Проверяет ответ API на корректность."""
     if response is None:
-        logger.error('response имеет неправильное значение')
-        raise Exception('response имеет неправильное значение')
+        response_error = 'response имеет неправильное значение'
+        logger.error(response_error)
+        raise DictionaryError(response_error)
 
-    if type(response) != dict:
+    if type(response) is not dict:
         logger.error('Ответ не является словарем')
         raise TypeError('Ответ не является словарем')
 
-    if type(response['homeworks']) != list:
+    if type(response['homeworks']) is not list:
         logger.error('Домашняя работа не является списком')
         raise TypeError('Домашняя работа не является списком')
+
+    if not response['homeworks']:
+        logger.info('Список домашних работ пуст')
+        raise KeyError('Список домашних работ пуст')
 
     return response['homeworks']
 
@@ -116,10 +148,11 @@ def parse_status(homework):
 
     homework_status = homework['status']
     if 'status' not in homework:
-        raise Exception('Отсутствует ключ "status" в ответе API')
+        raise KeyError('Отсутствует ключ "status" в ответе API')
 
     if homework_status not in HOMEWORK_STATUSES:
-        raise Exception(f'Неизвестный статус работы: {homework_status}')
+        error = f'Неизвестный статус работы: {homework_status}'
+        raise UnknownStatusError(error)
 
     verdict = HOMEWORK_STATUSES[homework_status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
@@ -134,10 +167,7 @@ def check_os_keys():
     ]
 
     for key in keys:
-        if key not in os.environ:
-            print(f'Ошибка {key} не назначен.')
-            return False
-        else:
+        if key in os.environ:
             return True
 
 
@@ -145,63 +175,52 @@ def check_tokens():
     """Проверка доступности переменных окружения."""
     if all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)):
         return True
-    else:
-        return False
 
 
 def main():
     """Основная логика работы бота."""
+    if not check_os_keys():
+        token_error = 'Отсутствует токен в системе'
+        logging.critical(token_error)
+        raise TokenSystemError(token_error)
+
+    if not check_tokens():
+        variable_error = 'Отсутствует переменная окружения'
+        logging.critical(variable_error)
+        raise EnvironmentVariableError(variable_error)
+
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
     status = ''
     message_error = ''
-    if check_os_keys():
-        if check_tokens():
-            while True:
-                try:
-                    response = get_api_answer(current_timestamp)
-                    if not response['homeworks']:
-                        logger.info(
-                            'Список домашних работ пуст'
-                        )
-                        time.sleep(RETRY_TIME)
-                    else:
-                        homework = check_response(response)[0]
-                        if homework and status != homework['status']:
-                            message = parse_status(homework)
-                            send_message(bot, message)
-                            status = homework['status']
-                            logger.info((f'Есть изменения, <<{status}>>'))
-                            time.sleep(RETRY_TIME)
-                        else:
-                            logger.info(
-                                ('Изменений нет, повторный запрос к API'
-                                 'через 10 минут')
-                            )
-                            time.sleep(RETRY_TIME)
-                except Exception as error:
-                    logging.error(error)
-                    message = f'Сбой в работе программы: {error}'
-                    if message != message_error:
-                        send_message(bot, message)
-                    logger.info(
-                        'Сбой программы, повторный запрос к API через 10 минут'
-                    )
-                    time.sleep(RETRY_TIME)
-        else:
-            logging.critical(
-                'Отсутствует переменная окружения'
+    while True:
+        try:
+            response = get_api_answer(current_timestamp)
+            homework = check_response(response)[0]
+            if homework and status != homework['status']:
+                message = parse_status(homework)
+                send_message(bot, message)
+                status = homework['status']
+                logger.info(
+                    (f'Есть изменения, <<{status}>>. Повторный запрос к API '
+                     'через 10 минут')
+                )
+                time.sleep(RETRY_TIME)
+            else:
+                logger.info(
+                    ('Изменений нет, повторный запрос к API '
+                     'через 10 минут')
+                )
+                time.sleep(RETRY_TIME)
+        except Exception as error:
+            logging.error(error)
+            message = f'Сбой в работе программы: {error}'
+            if message != message_error:
+                send_message(bot, message)
+            logger.info(
+                'Сбой программы, повторный запрос к API через 10 минут'
             )
-            raise Exception(
-                'Отсутствует переменная окружения'
-            )
-    else:
-        logging.critical(
-            'Отсутствует токен в системе'
-        )
-        raise Exception(
-            'Отсутствует токен в системе'
-        )
+            time.sleep(RETRY_TIME)
 
 
 if __name__ == '__main__':
