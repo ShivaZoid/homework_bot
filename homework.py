@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import requests
 import telegram
 
+import exceptions
 
 load_dotenv()
 
@@ -47,30 +48,6 @@ formatter = logging.Formatter(
 handler.setFormatter(formatter)
 
 
-class RequestExceptionError(Exception):
-    """Ошибка при запросе."""
-
-
-class StatusCodeError(Exception):
-    """Ошибка ответа сервера."""
-
-
-class DictionaryError(Exception):
-    """Ошибка полученного словаря."""
-
-
-class UnknownStatusError(Exception):
-    """Неизвестный статус работы."""
-
-
-class TokenSystemError(Exception):
-    """Отсутствует токен в системе."""
-
-
-class EnvironmentVariableError(Exception):
-    """Отсутствует переменная окружения."""
-
-
 def send_message(bot, message):
     """Отправляет сообщение в Telegram чат."""
     try:
@@ -99,20 +76,20 @@ def get_api_answer(current_timestamp):
     except requests.exceptions.RequestException as requests_error:
         api_answer_error = f'Ошибка при запросе к API: {requests_error}'
         logger.error(api_answer_error)
-        raise RequestExceptionError(api_answer_error) from requests_error
+        raise exceptions.RequestExceptionError(api_answer_error)
 
     status_code = homework_response.status_code
     if status_code != HTTPStatus.OK:
         status_code_error = f'Ошибка {status_code}'
         logger.error(status_code_error)
-        raise StatusCodeError(status_code_error)
+        raise exceptions.StatusCodeError(status_code_error)
 
     try:
         return homework_response.json()
     except json.JSONDecodeError as json_error:
         api_answer_error = f'Ошибка ответа формата json {json_error}'
         logger.error(api_answer_error)
-        raise json.JSONDecodeError(api_answer_error) from json_error
+        raise json.JSONDecodeError(api_answer_error)
 
 
 def check_response(response):
@@ -120,11 +97,15 @@ def check_response(response):
     if response is None:
         response_error = 'response имеет неправильное значение'
         logger.error(response_error)
-        raise DictionaryError(response_error)
+        raise exceptions.DictionaryError(response_error)
 
     if type(response) is not dict:
         logger.error('Ответ не является словарем')
         raise TypeError('Ответ не является словарем')
+
+    if 'homeworks' not in response:
+        logger.error('Отсутствует ключ homeworks в словаре')
+        raise KeyError('Отсутствует ключ homeworks в словаре')
 
     if type(response['homeworks']) is not list:
         logger.error('Домашняя работа не является списком')
@@ -142,17 +123,17 @@ def parse_status(homework):
 
     статус этой работы.
     """
-    homework_name = homework['homework_name']
     if 'homework_name' not in homework:
         raise KeyError('Отсутствует ключ "homework_name" в ответе API')
+    homework_name = homework['homework_name']
 
-    homework_status = homework['status']
     if 'status' not in homework:
         raise KeyError('Отсутствует ключ "status" в ответе API')
+    homework_status = homework['status']
 
     if homework_status not in HOMEWORK_STATUSES:
         error = f'Неизвестный статус работы: {homework_status}'
-        raise UnknownStatusError(error)
+        raise exceptions.UnknownStatusError(error)
 
     verdict = HOMEWORK_STATUSES[homework_status]
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
@@ -173,8 +154,7 @@ def check_os_keys():
 
 def check_tokens():
     """Проверка доступности переменных окружения."""
-    if all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)):
-        return True
+    return all((PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID))
 
 
 def main():
@@ -182,12 +162,12 @@ def main():
     if not check_os_keys():
         token_error = 'Отсутствует токен в системе'
         logging.critical(token_error)
-        raise TokenSystemError(token_error)
+        raise exceptions.TokenSystemError(token_error)
 
     if not check_tokens():
         variable_error = 'Отсутствует переменная окружения'
         logging.critical(variable_error)
-        raise EnvironmentVariableError(variable_error)
+        raise exceptions.EnvironmentVariableError(variable_error)
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     current_timestamp = int(time.time())
